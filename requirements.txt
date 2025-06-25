@@ -1,0 +1,45 @@
+# requirements.txt
+
+# Core ML and Data Handling
+transformers
+peft
+accelerate
+datasets
+torch
+torchvision
+numpy<2.0
+tensorflow
+scikit-learn
+joblib
+pandas
+matplotlib
+hf_xet
+
+# NLP and Text Processing
+spacy==3.7.4
+en_core_web_sm
+textblob
+nltk
+textstat
+
+# Web Scraping and API
+beautifulsoup4
+requests
+googlesearch-python
+lxml
+newsapi-python
+trafilatura
+
+# LangChain and Vector DB
+langchain
+chromadb
+sentence-transformers
+langchain-community
+bitsandbytes
+
+# Evaluation
+rouge_score
+bert_score
+
+# Flask for Backend
+Flask
