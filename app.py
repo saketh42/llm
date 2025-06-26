@@ -1,22 +1,28 @@
 # app.py
 
-from flask import Flask, request, jsonify, abort
+from flask import Flask, request, jsonify, abort, render_template, send_from_directory
 import logging
+import os
 
 # Import the main analysis function and config
 from analysis_logic import run_full_analysis
 import config
 
 # Initialize Flask App
-app = Flask(__name__)
+app = Flask(__name__, static_folder='static', template_folder='templates')
 
 # Configure logging to be consistent with the logic module
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 @app.route('/')
 def index():
-    """A simple index route to show that the server is running."""
-    return "BharatLens Analysis Backend is running. Use the /analyze endpoint to submit a job."
+    """Serve the main frontend page."""
+    return render_template('index.html')
+
+@app.route('/static/visuals/<filename>')
+def serve_visuals(filename):
+    """Serve visualization images."""
+    return send_from_directory(config.VISUALS_PATH, filename)
 
 @app.route('/analyze', methods=['POST'])
 def analyze_topic():
@@ -64,6 +70,11 @@ if __name__ == '__main__':
     if not config.NEWS_API_KEY:
         logging.warning("NEWS_API_KEY is not set. The service will not be able to fetch articles.")
     
+    # Create necessary directories
+    os.makedirs('templates', exist_ok=True)
+    os.makedirs('static', exist_ok=True)
+    os.makedirs(config.VISUALS_PATH, exist_ok=True)
+    
     # Run the Flask app
     # host='0.0.0.0' makes it accessible from other devices on the same network
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=True,threaded=True)

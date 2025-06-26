@@ -9,6 +9,7 @@ import joblib
 from collections import defaultdict
 import re
 import logging
+from datetime import datetime
 
 import chromadb
 import spacy
@@ -34,6 +35,8 @@ from sentence_transformers.util import cos_sim
 from transformers import pipeline
 from sklearn.ensemble import RandomForestRegressor
 
+import collections
+
 # Local imports from our project structure
 import config
 
@@ -45,6 +48,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # Download NLTK data (will only download if missing)
 nltk.download('punkt', quiet=True)
+nltk.download('punkt_tab')
+
 
 # Load NLP models once to avoid reloading on every API call
 try:
@@ -52,6 +57,10 @@ try:
     sentiment_pipeline = pipeline("sentiment-analysis")
     embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
     summarizer_pipeline = pipeline("summarization", model="google/flan-t5-base")
+
+    # Load NLP models once to avoid reloading
+    nlp = spacy.load("en_core_web_sm")
+    sentiment_pipeline = pipeline("sentiment-analysis")
 except Exception as e:
     logging.error(f"Failed to load a pre-trained model: {e}")
     # In a real app, you might want to exit or handle this more gracefully
@@ -174,6 +183,64 @@ def generate_detailed_bias_report(articles: list) -> str:
         report += f"- **Overall Polarity**: {blob.sentiment.polarity:.2f} (1 is positive, -1 is negative)\n"
         report += f"- **Overall Subjectivity**: {blob.sentiment.subjectivity:.2f} (1 is opinion, 0 is fact-based)\n"
     return report
+
+def extract_dynamic_perspectives(articles, topic, n_clusters=4):
+    """
+    Dynamically cluster articles by semantic similarity and summarize each cluster as a perspective.
+    Returns a list of {label, summary} dicts.
+    """
+    if not articles or not embedding_model:
+        return []
+    texts = [a.get('title', '') + '. ' + a.get('text', '') for a in articles]
+    embeddings = embedding_model.embed_documents(texts)
+    
+    # Use KMeans to cluster embeddings
+    from sklearn.cluster import KMeans
+    import numpy as np
+    X = np.array(embeddings)
+    n_clusters = min(n_clusters, len(articles))
+    if n_clusters < 2:
+        n_clusters = 1
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=5)
+    labels = kmeans.fit_predict(X)
+    
+    # Group articles by cluster
+    clusters = collections.defaultdict(list)
+    for idx, label in enumerate(labels):
+        clusters[label].append(articles[idx])
+    
+    # Label each cluster by most common country/entity/topic
+    def get_cluster_label(arts):
+        # Try to extract most common country/entity from titles/texts
+        all_text = ' '.join([a.get('title', '') + ' ' + a.get('text', '') for a in arts]).lower()
+        # Use spaCy NER for GPE (countries/cities)
+        if nlp:
+            doc = nlp(all_text)
+            gpes = [ent.text for ent in doc.ents if ent.label_ == 'GPE']
+            if gpes:
+                most_common = collections.Counter(gpes).most_common(1)[0][0]
+                return most_common.title() + ' Perspective'
+        # Fallback: use most common word in titles
+        words = [w for a in arts for w in a.get('title', '').split()]
+        if words:
+            return collections.Counter(words).most_common(1)[0][0].title() + ' Perspective'
+        return 'Perspective'
+    
+    # Summarize each cluster
+    perspective_summaries = []
+    for cluster_arts in clusters.values():
+        label = get_cluster_label(cluster_arts)
+        context = '\n'.join([a.get('title', '') + '. ' + a.get('text', '') for a in cluster_arts])
+        prompt = f"As an expert analyst, summarize the perspective labeled '{label}' on '{topic}'. Focus on unique viewpoints, arguments, and evidence from the articles."
+        if summarizer_pipeline:
+            try:
+                summary = summarizer_pipeline(prompt + '\n' + context[:2000], max_length=300, min_length=60, do_sample=False)[0]['summary_text']
+            except Exception as e:
+                summary = f"Error generating summary: {e}"
+        else:
+            summary = "Summarizer model not available."
+        perspective_summaries.append({'label': label, 'summary': summary})
+    return perspective_summaries
 
 # ======================================================================
 # 4. EVALUATION METRICS MODULE
@@ -356,6 +423,10 @@ def run_full_analysis(topic: str, num_articles: int = 25) -> dict:
     rag_collection = create_rag_system(articles, topic)
     summary_report, rag_context = generate_summary_with_rag(topic, rag_collection)
     bias_report = generate_detailed_bias_report(articles)
+
+    # NEW: Dynamic perspective summaries
+    dynamic_perspectives = extract_dynamic_perspectives(articles, topic)
+    results['perspectives'] = dynamic_perspectives
 
     results['executive_summary'] = summary_report
     results['detailed_bias_report'] = bias_report
