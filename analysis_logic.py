@@ -17,6 +17,8 @@ import textblob
 from newsapi import NewsApiClient
 import pandas as pd
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from urllib.parse import urlparse
 
@@ -348,8 +350,8 @@ class TemporalBiasAnalyzer:
 # 6. VISUALIZATION FUNCTIONS (MODIFIED FOR BACKEND)
 # ======================================================================
 
-def visualize_bias_evolution(historical_data: pd.DataFrame, output_path: str):
-    """Saves a line plot of bias evolution to a file."""
+def visualize_bias_evolution(historical_data: pd.DataFrame, output_path: str, model=None):
+    """Saves a line plot of bias evolution to a file, including tomorrow's prediction if model is provided."""
     if historical_data is None or historical_data.empty:
         logging.warning("Cannot generate bias evolution viz: data is empty.")
         return
@@ -359,6 +361,21 @@ def visualize_bias_evolution(historical_data: pd.DataFrame, output_path: str):
     if len(historical_data) >= 3:
         historical_data['rolling_avg'] = historical_data['bias_intensity'].rolling(window=3).mean()
         ax.plot(historical_data['date'], historical_data['rolling_avg'], linestyle='--', color='r', label='3-Day Rolling Average')
+
+    # Predict tomorrow's bias if model is available
+    if model is not None and not historical_data.empty:
+        last_date = historical_data['date'].max()
+        days_since_start = (last_date - historical_data['date'].min()).days
+        last_bias = historical_data['bias_intensity'].iloc[-1]
+        X_pred = np.array([[days_since_start + 1, last_bias]])
+        try:
+            predicted_bias = model.predict(X_pred)[0]
+            tomorrow = last_date + pd.Timedelta(days=1)
+            ax.scatter([tomorrow], [predicted_bias], color='red', marker='*', s=200, label="Predicted Bias (Tomorrow)")
+            ax.annotate(f"{predicted_bias:.2f}", (tomorrow, predicted_bias), textcoords="offset points", xytext=(0,10), ha='center', color='red', fontsize=12)
+        except Exception as e:
+            logging.warning(f"Could not predict tomorrow's bias: {e}")
+
     ax.set_title('Historical Bias Evolution Over Time', fontsize=18, weight='bold')
     ax.set_xlabel('Date', fontsize=12)
     ax.set_ylabel('Average Bias Intensity (Sentiment Polarity)', fontsize=12)
@@ -439,7 +456,7 @@ def run_full_analysis(topic: str, num_articles: int = 25) -> dict:
     # Part 3: Temporal Feedback Loop
     analyzer = TemporalBiasAnalyzer()
     new_temporal_data = analyzer.process_articles_for_temporal_analysis(articles)
-    _, historical_data = analyzer.update_model_with_new_data(new_temporal_data)
+    model, historical_data = analyzer.update_model_with_new_data(new_temporal_data)
 
     # Part 4: Visualization
     os.makedirs(config.VISUALS_PATH, exist_ok=True)
@@ -451,7 +468,7 @@ def run_full_analysis(topic: str, num_articles: int = 25) -> dict:
     historical_chart_path = os.path.join(config.VISUALS_PATH, historical_chart_filename)
     source_chart_path = os.path.join(config.VISUALS_PATH, source_chart_filename)
 
-    visualize_bias_evolution(historical_data, historical_chart_path)
+    visualize_bias_evolution(historical_data, historical_chart_path, model=model)
     visualize_source_bias(articles, source_chart_path)
 
     results['visualizations'] = {
